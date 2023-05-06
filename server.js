@@ -12,10 +12,10 @@ app.use(express.json());
 app.use(morgan("dev"));
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: "https://47d7adbf.car-frontend.pages.dev/",
     methods: ["GET", "POST", "PUT", "OPTIONS", "DELETE", "PATCH"],
     "X-Requested-With": "XMLHttpRequest",
-    "Access-Control-Allow-Origin": "http://localhost:3000",
+    "Access-Control-Allow-Origin": "https://47d7adbf.car-frontend.pages.dev/",
     "Access-Control-Allow-Credentials": true,
   })
 );
