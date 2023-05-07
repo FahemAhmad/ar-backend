@@ -12,9 +12,11 @@ router.get("/unsold-tickets", async (req, res) => {
       .lean()
       .exec();
 
+    const sortedTickets = latestLottery.availableTickets.sort((a, b) => a - b);
+
     res.status(200).json({
       lotteryNo: latestLottery.lotteryNo,
-      availableTickets: latestLottery.availableTickets,
+      availableTickets: sortedTickets,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -53,7 +55,6 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
         booking.lotteryNo == lotteryNo
     );
 
-    console.log("booked reaeched", booked);
     if (booked) {
       let tticketNumbers = [...booked.ticketNumbers, ...ticketNumbers];
       const index = lottery.bookedTickets.indexOf(booked);
@@ -92,11 +93,17 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
     }
 
     const emailSubject = `Lottery tickets purchase confirmation for ${userInformation.email}`;
-    const emailBody = `Dear ${
-      userInformation.fullName
-    }, \n\nThank you for purchasing the following lottery tickets: ${ticketNumbers.join(
-      ", "
-    )}.\n\nRegards,\nThe Lottery Team`;
+    const emailBody = `Hello, 
+    I want to reserve these tickets: [${ticketNumbers.join("] [")}]. 
+    With the name of: ${userInformation.fullName}. 
+    I am from: ${userInformation.city} ${
+      userInformation.state
+    } and my phone number is: ${userInformation.phoneNumber}.
+    
+    Thank you!
+    
+    Regards,
+    The Lottery Team`;
 
     await sendEmail(userInformation.email, emailSubject, emailBody);
 
@@ -153,6 +160,11 @@ router.get("/tickets", async (req, res) => {
         path: "bookedTickets.user",
         model: "User",
         select: "fullName email",
+      })
+      .populate({
+        path: "soldTickets.user",
+        model: "User",
+        select: "fullName email",
       });
 
     if (!tickets) {
@@ -183,6 +195,7 @@ router.get("/tickets", async (req, res) => {
     });
     const soldTickets = tickets.soldTickets.flatMap((sold) => {
       return sold.ticketNumbers.map((ticketNumber) => {
+        console.log("sold.user", sold);
         return {
           lotteryNo: sold.lotteryNo,
           ticketNumber,
@@ -272,7 +285,9 @@ router.post("/claim-ticket/:lotteryNo/:ticketNo/:value", async (req, res) => {
       );
 
       if (ticketIndex === -1) {
-        return res.status(404).json({ message: "Sold Tickets can not be made available" });
+        return res
+          .status(404)
+          .json({ message: "Sold Tickets can not be made available" });
       }
 
       let booked = ticket.bookedTickets[ticketIndex];
@@ -322,11 +337,10 @@ router.post("/sold-ticket/:lotteryNo/:ticketNo/:value", async (req, res) => {
     if (value === "true") {
       let user = null;
 
-      user = ticket.bookedTickets.find((booking) =>
-        booking.ticketNumbers.includes(ticketNo)
-      );
-
-      if (!user) user = null;
+      user =
+        ticket.bookedTickets.find((booking) =>
+          booking.ticketNumbers.includes(ticketNo)
+        ) || null;
 
       let sold = ticket.soldTickets.find((booking) => {
         booking?.user === user && booking.lotteryNo == lotteryNo;
@@ -368,6 +382,7 @@ router.post("/sold-ticket/:lotteryNo/:ticketNo/:value", async (req, res) => {
           }
         );
       } else {
+        console.log("User", user.user);
         const res = await Ticket.updateOne(
           { _id: ticket._id },
           {
@@ -376,7 +391,7 @@ router.post("/sold-ticket/:lotteryNo/:ticketNo/:value", async (req, res) => {
             },
             $push: {
               soldTickets: {
-                user: null,
+                user: user.user || null,
                 ticketNumbers: [ticketNo],
                 lotteryNo,
               },
