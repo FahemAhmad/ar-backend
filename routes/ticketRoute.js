@@ -132,9 +132,7 @@ router.post("/create-lottery", async (req, res) => {
     // Generate an array of available ticket numbers
     const availableTickets = Array(count)
       .fill()
-      .map((_, index) =>
-        String(index + 1).padStart(String(count - 1).length, "0")
-      );
+      .map((_, index) => String(index).padStart(String(count - 1).length, "0"));
 
     // Create the new lottery object
     const newLottery = new Ticket({
