@@ -24,28 +24,122 @@ router.get("/unsold-tickets", async (req, res) => {
 });
 
 //update the ticket
+// router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
+//   const { lotteryNo } = req.params;
+//   const { ticketNumbers, userInformation } = req.body;
+
+//   try {
+//     let user = await User.findOne({ email: userInformation.email });
+//     if (!user) {
+//       // Create a new user if not found
+//       user = new User(userInformation);
+//       await user.save();
+//     } else {
+//       // Update user information if found
+//       Object.assign(user, userInformation);
+//       await user.save();
+//     }
+
+//     const lottery = await Ticket.findOne({ lotteryNo });
+//     if (!lottery) {
+//       return res.status(404).json({ message: "Lottery not found" });
+//     }
+
+//     const updatedAvailableTickets = lottery.availableTickets.filter(
+//       (ticketNumber) => !ticketNumbers.includes(ticketNumber)
+//     );
+
+//     let booked = lottery.bookedTickets.find(
+//       (booking) =>
+//         booking?.user?.toString() === user?._id.toString() &&
+//         booking.lotteryNo == lotteryNo
+//     );
+
+//     if (booked) {
+//       let tticketNumbers = [...booked.ticketNumbers, ...ticketNumbers];
+//       const index = lottery.bookedTickets.indexOf(booked);
+
+//       await Ticket.updateOne(
+//         { _id: lottery._id },
+//         {
+//           $set: {
+//             availableTickets: updatedAvailableTickets,
+//             [`bookedTickets.${index}.ticketNumbers`]: tticketNumbers,
+//           },
+//         }
+//       );
+//     } else {
+//       booked = {
+//         user: user._id,
+//         ticketNumbers,
+//         lotteryNo,
+//       };
+
+//       await Ticket.updateOne(
+//         { _id: lottery._id },
+//         {
+//           $set: {
+//             availableTickets: updatedAvailableTickets,
+//           },
+//           $push: {
+//             bookedTickets: {
+//               user: user._id,
+//               ticketNumbers,
+//               lotteryNo,
+//             },
+//           },
+//         }
+//       );
+//     }
+
+//     const emailSubject = `Lottery tickets purchase confirmation for ${userInformation.email}`;
+//     const emailBody = `Hello,
+//     I want to reserve these tickets: [${ticketNumbers.join("] [")}].
+//     With the name of: ${userInformation.fullName}.
+//     I am from: ${userInformation.city} ${
+//       userInformation.state
+//     } and my phone number is: ${userInformation.phoneNumber}.
+
+//     Thank you!
+
+//     Regards,
+//     The Lottery Team`;
+
+//     await sendEmail(userInformation.email, emailSubject, emailBody);
+
+//     res.status(200).json({
+//       message: `Successfully sold tickets for lottery ${lotteryNo}`,
+//       updatedAvailableTickets,
+//     });
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// });
 router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
   const { lotteryNo } = req.params;
   const { ticketNumbers, userInformation } = req.body;
 
-  const session = await mongoose.startSession();
-  session.startTransaction();
   try {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     let user = await User.findOne({ email: userInformation.email }).session(
       session
     );
     if (!user) {
       // Create a new user if not found
       user = new User(userInformation);
-      await user.save();
+      await user.save({ session });
     } else {
       // Update user information if found
       Object.assign(user, userInformation);
-      await user.save();
+      await user.save({ session });
     }
 
-    const lottery = await Ticket.findOne({ lotteryNo });
+    const lottery = await Ticket.findOne({ lotteryNo }).session(session);
     if (!lottery) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ message: "Lottery not found" });
     }
 
@@ -53,27 +147,42 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
       (ticketNumber) => !ticketNumbers.includes(ticketNumber)
     );
 
-    let booked = lottery.bookedTickets.find(
-      (booking) =>
-        booking?.user?.toString() === user?._id.toString() &&
-        booking.lotteryNo == lotteryNo
+    const lockedTicket = await Ticket.findOneAndUpdate(
+      {
+        _id: lottery._id,
+        availableTickets: { $all: ticketNumbers },
+      },
+      { $addToSet: { lockedTickets: { user: user._id, ticketNumbers } } },
+      { session, new: true }
     );
 
-    if (booked) {
-      let tticketNumbers = [...booked.ticketNumbers, ...ticketNumbers];
-      const index = lottery.bookedTickets.indexOf(booked);
+    if (!lockedTicket) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(409).json({ message: "Tickets already booked" });
+    }
+
+    const index = lottery.bookedTickets.findIndex(
+      (booking) =>
+        booking?.user?.toString() === user?._id.toString() &&
+        booking.lotteryNo === lotteryNo
+    );
+
+    if (index !== -1) {
+      const tticketNumbers = [
+        ...lottery.bookedTickets[index].ticketNumbers,
+        ...ticketNumbers,
+      ];
 
       await Ticket.updateOne(
-        { _id: lottery._id },
         {
-          $set: {
-            availableTickets: updatedAvailableTickets,
-            [`bookedTickets.${index}.ticketNumbers`]: tticketNumbers,
-          },
-        }
+          _id: lottery._id,
+          "bookedTickets._id": lottery.bookedTickets[index]._id,
+        },
+        { $set: { [`bookedTickets.$.ticketNumbers`]: tticketNumbers } }
       );
     } else {
-      booked = {
+      const booking = {
         user: user._id,
         ticketNumbers,
         lotteryNo,
@@ -86,11 +195,7 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
             availableTickets: updatedAvailableTickets,
           },
           $push: {
-            bookedTickets: {
-              user: user._id,
-              ticketNumbers,
-              lotteryNo,
-            },
+            bookedTickets: booking,
           },
         }
       );
@@ -110,6 +215,9 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
     The Lottery Team`;
 
     await sendEmail(userInformation.email, emailSubject, emailBody);
+
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(200).json({
       message: `Successfully sold tickets for lottery ${lotteryNo}`,
