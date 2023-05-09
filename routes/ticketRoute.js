@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const { sendEmail } = require("../services/emailService.js");
-const mongoose = require("mongoose");
 
 const Ticket = require("../model/ticketModel");
 const User = require("../model/userModel.js");
@@ -25,122 +24,24 @@ router.get("/unsold-tickets", async (req, res) => {
 });
 
 //update the ticket
-// router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
-//   const { lotteryNo } = req.params;
-//   const { ticketNumbers, userInformation } = req.body;
-
-//   try {
-//     let user = await User.findOne({ email: userInformation.email });
-//     if (!user) {
-//       // Create a new user if not found
-//       user = new User(userInformation);
-//       await user.save();
-//     } else {
-//       // Update user information if found
-//       Object.assign(user, userInformation);
-//       await user.save();
-//     }
-
-//     const lottery = await Ticket.findOne({ lotteryNo });
-//     if (!lottery) {
-//       return res.status(404).json({ message: "Lottery not found" });
-//     }
-
-//     const updatedAvailableTickets = lottery.availableTickets.filter(
-//       (ticketNumber) => !ticketNumbers.includes(ticketNumber)
-//     );
-
-//     let booked = lottery.bookedTickets.find(
-//       (booking) =>
-//         booking?.user?.toString() === user?._id.toString() &&
-//         booking.lotteryNo == lotteryNo
-//     );
-
-//     if (booked) {
-//       let tticketNumbers = [...booked.ticketNumbers, ...ticketNumbers];
-//       const index = lottery.bookedTickets.indexOf(booked);
-
-//       await Ticket.updateOne(
-//         { _id: lottery._id },
-//         {
-//           $set: {
-//             availableTickets: updatedAvailableTickets,
-//             [`bookedTickets.${index}.ticketNumbers`]: tticketNumbers,
-//           },
-//         }
-//       );
-//     } else {
-//       booked = {
-//         user: user._id,
-//         ticketNumbers,
-//         lotteryNo,
-//       };
-
-//       await Ticket.updateOne(
-//         { _id: lottery._id },
-//         {
-//           $set: {
-//             availableTickets: updatedAvailableTickets,
-//           },
-//           $push: {
-//             bookedTickets: {
-//               user: user._id,
-//               ticketNumbers,
-//               lotteryNo,
-//             },
-//           },
-//         }
-//       );
-//     }
-
-//     const emailSubject = `Lottery tickets purchase confirmation for ${userInformation.email}`;
-//     const emailBody = `Hello,
-//     I want to reserve these tickets: [${ticketNumbers.join("] [")}].
-//     With the name of: ${userInformation.fullName}.
-//     I am from: ${userInformation.city} ${
-//       userInformation.state
-//     } and my phone number is: ${userInformation.phoneNumber}.
-
-//     Thank you!
-
-//     Regards,
-//     The Lottery Team`;
-
-//     await sendEmail(userInformation.email, emailSubject, emailBody);
-
-//     res.status(200).json({
-//       message: `Successfully sold tickets for lottery ${lotteryNo}`,
-//       updatedAvailableTickets,
-//     });
-//   } catch (err) {
-//     res.status(500).json({ message: err.message });
-//   }
-// });
 router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
   const { lotteryNo } = req.params;
   const { ticketNumbers, userInformation } = req.body;
 
   try {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    let user = await User.findOne({ email: userInformation.email }).session(
-      session
-    );
+    let user = await User.findOne({ email: userInformation.email });
     if (!user) {
       // Create a new user if not found
       user = new User(userInformation);
-      await user.save({ session });
+      await user.save();
     } else {
       // Update user information if found
       Object.assign(user, userInformation);
-      await user.save({ session });
+      await user.save();
     }
 
-    const lottery = await Ticket.findOne({ lotteryNo }).session(session);
+    const lottery = await Ticket.findOne({ lotteryNo });
     if (!lottery) {
-      await session.abortTransaction();
-      session.endSession();
       return res.status(404).json({ message: "Lottery not found" });
     }
 
@@ -148,42 +49,27 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
       (ticketNumber) => !ticketNumbers.includes(ticketNumber)
     );
 
-    const lockedTicket = await Ticket.findOneAndUpdate(
-      {
-        _id: lottery._id,
-        availableTickets: { $all: ticketNumbers },
-      },
-      { $addToSet: { lockedTickets: { user: user._id, ticketNumbers } } },
-      { session, new: true }
-    );
-
-    if (!lockedTicket) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(409).json({ message: "Tickets already booked" });
-    }
-
-    const index = lottery.bookedTickets.findIndex(
+    let booked = lottery.bookedTickets.find(
       (booking) =>
         booking?.user?.toString() === user?._id.toString() &&
-        booking.lotteryNo === lotteryNo
+        booking.lotteryNo == lotteryNo
     );
 
-    if (index !== -1) {
-      const tticketNumbers = [
-        ...lottery.bookedTickets[index].ticketNumbers,
-        ...ticketNumbers,
-      ];
+    if (booked) {
+      let tticketNumbers = [...booked.ticketNumbers, ...ticketNumbers];
+      const index = lottery.bookedTickets.indexOf(booked);
 
       await Ticket.updateOne(
+        { _id: lottery._id },
         {
-          _id: lottery._id,
-          "bookedTickets._id": lottery.bookedTickets[index]._id,
-        },
-        { $set: { [`bookedTickets.$.ticketNumbers`]: tticketNumbers } }
+          $set: {
+            availableTickets: updatedAvailableTickets,
+            [`bookedTickets.${index}.ticketNumbers`]: tticketNumbers,
+          },
+        }
       );
     } else {
-      const booking = {
+      booked = {
         user: user._id,
         ticketNumbers,
         lotteryNo,
@@ -196,7 +82,11 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
             availableTickets: updatedAvailableTickets,
           },
           $push: {
-            bookedTickets: booking,
+            bookedTickets: {
+              user: user._id,
+              ticketNumbers,
+              lotteryNo,
+            },
           },
         }
       );
@@ -216,9 +106,6 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
     The Lottery Team`;
 
     await sendEmail(userInformation.email, emailSubject, emailBody);
-
-    await session.commitTransaction();
-    session.endSession();
 
     res.status(200).json({
       message: `Successfully sold tickets for lottery ${lotteryNo}`,
@@ -245,7 +132,7 @@ router.post("/create-lottery", async (req, res) => {
     // Generate an array of available ticket numbers
     const availableTickets = Array(count)
       .fill()
-      .map((_, index) => String(index).padStart(String(count - 1).length, "0"));
+      .map((_, index) => String(index + 1).padStart(String(count).length, "0"));
 
     // Create the new lottery object
     const newLottery = new Ticket({
@@ -265,7 +152,6 @@ router.post("/create-lottery", async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
 router.get("/tickets", async (req, res) => {
   try {
     const tickets = await Ticket.findOne({}, { _id: 0 })
