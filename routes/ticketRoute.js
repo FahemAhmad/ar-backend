@@ -28,8 +28,12 @@ router.patch("/sell-tickets/:lotteryNo", async (req, res) => {
   const { lotteryNo } = req.params;
   const { ticketNumbers, userInformation } = req.body;
 
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
-    let user = await User.findOne({ email: userInformation.email });
+    let user = await User.findOne({ email: userInformation.email }).session(
+      session
+    );
     if (!user) {
       // Create a new user if not found
       user = new User(userInformation);
